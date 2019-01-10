@@ -16,6 +16,14 @@ import (
 	"time"
 )
 
+type UserType struct {
+	UserType string
+}
+
+var user_types []UserType
+
+var OnboardingRoles = "Super Admin,Notification Admin"
+
 type User struct {
 	gorm.Model
 	UserId string
@@ -326,9 +334,22 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	fmt.Println("================uid==============")
 	fmt.Println(uid)
 
+	m.DB.Table("mlmuser.user_type").Select("distinct user_type").Where("user_id = ?", uid).Scan(&user_types)
+
 	//email := convert_to_email(uid)
 	//roles := assertion.Subject.Roles.Value
-	roles := []string{"user", "super"}
+	roles := []string{"user", "devop"}
+	path := "/?"
+
+	for _, e := range user_types {
+		roles = append(roles, e.UserType)
+	}
+	for _, e := range roles {
+		if strings.Contains(OnboardingRoles, e) {
+			path = "/onboarding/index.html?"
+			break
+		}
+	}
 	standardClaims := jwt.StandardClaims{
 		Audience: m.ServiceProvider.Metadata().EntityID,
 		IssuedAt: now.Unix(),
@@ -365,7 +386,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	}
 
 	m.ClientToken.SetToken(w, r, signedToken, m.TokenMaxAge)
-	ruri := "/?" + AKEY + "=" + signedToken
+	ruri := path + AKEY + "=" + signedToken
 
 	http.Redirect(w, r, ruri, http.StatusFound)
 }

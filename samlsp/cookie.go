@@ -1,12 +1,15 @@
 package samlsp
 
 import (
+	"github.com/thaniyarasu/saml"
 	"net/http"
+	"os"
 	"strings"
 	"time"
-
-	"github.com/crewjam/saml"
 )
+
+var AKEY = os.Getenv("AUTHENTICATION_KEY")
+var ECKE = os.Getenv("ENABLE_COOKIE_AUTH")
 
 // ClientState implements client side storage for state.
 type ClientState interface {
@@ -81,24 +84,41 @@ func (c ClientCookies) DeleteState(w http.ResponseWriter, r *http.Request, id st
 
 // SetToken assigns the specified token by setting a cookie.
 func (c ClientCookies) SetToken(w http.ResponseWriter, r *http.Request, value string, maxAge time.Duration) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     c.Name,
-		Domain:   c.Domain,
-		Value:    value,
-		MaxAge:   int(maxAge.Seconds()),
-		HttpOnly: true,
-		Secure:   c.Secure || r.URL.Scheme == "https",
-		Path:     "/",
-	})
+	w.Header().Set(AKEY, value)
+
+	if ECKE == "true" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     c.Name,
+			Domain:   c.Domain,
+			Value:    value,
+			MaxAge:   int(maxAge.Seconds()),
+			HttpOnly: true,
+			Secure:   c.Secure || r.URL.Scheme == "https",
+			Path:     "/",
+		})
+	}
 }
 
 // GetToken returns the token by reading the cookie.
 func (c ClientCookies) GetToken(r *http.Request) string {
-	cookie, err := r.Cookie(c.Name)
-	if err != nil {
-		return ""
+	tkn := r.Header.Get(AKEY)
+	if len(tkn) > 0 {
+		return tkn
 	}
-	return cookie.Value
+	if r.ParseForm() == nil {
+		tkn = r.Form.Get(AKEY)
+		if len(tkn) > 0 {
+			return tkn
+		}
+	}
+	if ECKE == "true" {
+		cookie, err := r.Cookie(c.Name)
+		if err != nil {
+			return ""
+		}
+		return cookie.Value
+	}
+	return ""
 }
 
 var _ ClientState = ClientCookies{}

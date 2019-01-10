@@ -64,7 +64,7 @@ func (r *AuthnRequest) Element() *etree.Element {
 		el.AddChild(r.Subject.Element())
 	}
 	if r.NameIDPolicy != nil {
-		el.AddChild(r.NameIDPolicy.Element())
+		//el.AddChild(r.NameIDPolicy.Element())
 	}
 	if r.Conditions != nil {
 		el.AddChild(r.Conditions.Element())
@@ -76,7 +76,7 @@ func (r *AuthnRequest) Element() *etree.Element {
 	//	el.AddChild(r.Scoping.Element())
 	//}
 	if r.ForceAuthn != nil {
-		el.CreateAttr("ForceAuthn", strconv.FormatBool(*r.ForceAuthn))
+		//el.CreateAttr("ForceAuthn", strconv.FormatBool(*r.ForceAuthn))
 	}
 	if r.IsPassive != nil {
 		el.CreateAttr("IsPassive", strconv.FormatBool(*r.IsPassive))
@@ -88,7 +88,7 @@ func (r *AuthnRequest) Element() *etree.Element {
 		el.CreateAttr("AssertionConsumerServiceURL", r.AssertionConsumerServiceURL)
 	}
 	if r.ProtocolBinding != "" {
-		el.CreateAttr("ProtocolBinding", r.ProtocolBinding)
+		//el.CreateAttr("ProtocolBinding", r.ProtocolBinding)
 	}
 	if r.AttributeConsumingServiceIndex != "" {
 		el.CreateAttr("AttributeConsumingServiceIndex", r.AttributeConsumingServiceIndex)

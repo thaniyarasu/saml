@@ -1,15 +1,29 @@
 package samlsp
 
 import (
-	"crypto/x509"
+	//"crypto/x509"
 	"encoding/base64"
-	"encoding/xml"
-	"net/http"
-	"time"
-
-	"github.com/crewjam/saml"
+	//"encoding/xml"
+	"fmt"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/postgres"
+	"github.com/thaniyarasu/saml"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
 )
+
+type User struct {
+	gorm.Model
+	UserId string
+}
+
+func (User) TableName() string {
+	return os.Getenv("AUTH_TABLE_NAME")
+}
 
 // Middleware implements middleware than allows a web application
 // to support SAML.
@@ -49,9 +63,11 @@ type Middleware struct {
 	ClientState       ClientState
 	ClientToken       ClientToken
 	Binding           string
+	DB                *gorm.DB
 }
 
 var jwtSigningMethod = jwt.SigningMethodHS256
+var secretBlock = []byte(os.Getenv("SECRET"))
 
 func randomBytes(n int) []byte {
 	rv := make([]byte, n)
@@ -65,14 +81,20 @@ func randomBytes(n int) []byte {
 // on the URIs specified by m.ServiceProvider.MetadataURL and
 // m.ServiceProvider.AcsURL.
 func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == m.ServiceProvider.MetadataURL.Path {
-		buf, _ := xml.MarshalIndent(m.ServiceProvider.Metadata(), "", "  ")
-		w.Header().Set("Content-Type", "application/samlmetadata+xml")
-		w.Write(buf)
-		return
-	}
+	fmt.Println("===============ServerHTTP============")
+	// block metadata
+	// if r.URL.Path == m.ServiceProvider.MetadataURL.Path {
+	// 	buf, _ := xml.MarshalIndent(m.ServiceProvider.Metadata(), "", "  ")
+	// 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
+	// 	w.Write(buf)
+	// 	return
+	// }
+	fmt.Println(r.URL.Path)
+	fmt.Println(m.ServiceProvider.AcsURL.Path)
+	//r.URL.Path == m.ServiceProvider.AcsURL.Path
 
-	if r.URL.Path == m.ServiceProvider.AcsURL.Path {
+	if true {
+		fmt.Println("entered")
 		r.ParseForm()
 		assertion, err := m.ServiceProvider.ParseResponse(r, m.getPossibleRequestIDs(r))
 		if err != nil {
@@ -95,12 +117,55 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // associated with a valid session. If the request is not associated with a valid
 // session, then rather than serve the request, the middlware redirects the user
 // to start the SAML auth flow.
+func (m *Middleware) setup(r *http.Request) error {
+	var rootURL *url.URL
+	rootURL, _ = url.Parse(r.Referer())
+
+	// if strings.Contains(r.Referer(), "localhost") {
+	// } else {
+	// 	rootURL, _ = url.Parse("https://" + r.Referer())
+	// }
+
+	acsURL := *rootURL
+	metadataURL := *rootURL
+	acsURL.Path = acsURL.Path + os.Getenv("ACS_PATH")
+	metadataURL.Path = metadataURL.Path + os.Getenv("META_PATH")
+
+	m.ServiceProvider.MetadataURL = metadataURL
+	m.ServiceProvider.AcsURL = acsURL
+	//m.ClientState.Domain = r.Host
+	//m.ClientToken.Domain = r.Host
+
+	// fmt.Println("===================")
+	// fmt.Println(metadataURL.Host)
+	// fmt.Println(acsURL.Host)
+	// fmt.Println(r.URL.Path)
+	// fmt.Println(r.URL.RawPath)
+	// fmt.Println(r.URL.String())
+	// fmt.Println(r.URL.Host)
+
+	fmt.Println("===================")
+	fmt.Println(rootURL)
+	fmt.Println(acsURL)
+	fmt.Println(r.Host)
+	fmt.Println(r.Referer())
+	fmt.Println("===================")
+	return nil
+}
+
 func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		if token := m.GetAuthorizationToken(r); token != nil {
+			//fmt.Println(token)
+			//fmt.Println(r.Context())
+			//fmt.Println(WithToken(r.Context(), token))
 			r = r.WithContext(WithToken(r.Context(), token))
 			handler.ServeHTTP(w, r)
 			return
+		}
+		//fmt.Println("======================")
+		if err := m.setup(r); err != nil {
+			panic("setup failed")
 		}
 
 		// If we try to redirect when the original request is the ACS URL we'll
@@ -129,17 +194,23 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		fmt.Println("===========================MAKEAuthFROm middleware=============")
+		fmt.Println(req)
 
 		// relayState is limited to 80 bytes but also must be integrety protected.
 		// this means that we cannot use a JWT because it is way to long. Instead
 		// we set a cookie that corresponds to the state
 		relayState := base64.URLEncoding.EncodeToString(randomBytes(42))
 
-		secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
+		//secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 		state := jwt.New(jwtSigningMethod)
 		claims := state.Claims.(jwt.MapClaims)
 		claims["id"] = req.ID
 		claims["uri"] = r.URL.String()
+		//fmt.Println(claims["id"])
+		//fmt.Println(claims["uri"])
+		//fmt.Println(binding)
+
 		signedState, err := state.SignedString(secretBlock)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -147,13 +218,22 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 		}
 
 		m.ClientState.SetState(w, r, relayState, signedState)
+
 		if binding == saml.HTTPRedirectBinding {
+			fmt.Println("saml.HTTPRedirectBinding")
 			redirectURL := req.Redirect(relayState)
+			//fmt.Println(redirectURL)
+
+			fmt.Println(redirectURL.String())
+
 			w.Header().Add("Location", redirectURL.String())
 			w.WriteHeader(http.StatusFound)
 			return
 		}
+
 		if binding == saml.HTTPPostBinding {
+			fmt.Println("saml.HTTPPostBinding")
+
 			w.Header().Add("Content-Security-Policy", ""+
 				"default-src; "+
 				"script-src 'sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE='; "+
@@ -176,7 +256,7 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 			ValidMethods: []string{jwtSigningMethod.Name},
 		}
 		token, err := jwtParser.Parse(value, func(t *jwt.Token) (interface{}, error) {
-			secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
+			//secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 			return secretBlock, nil
 		})
 		if err != nil || !token.Valid {
@@ -199,9 +279,13 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 // It sets a cookie that contains a signed JWT containing the assertion attributes.
 // It then redirects the user's browser to the original URL contained in RelayState.
 func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) {
-	secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
+	//secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
+	fmt.Println("============Authorize===============")
+	fmt.Println("============assertion===============")
 
-	redirectURI := "/"
+	fmt.Println(assertion)
+
+	//redirectURI := "/"
 	if relayState := r.Form.Get("RelayState"); relayState != "" {
 		stateValue := m.ClientState.GetState(r, relayState)
 		if stateValue == "" {
@@ -222,25 +306,49 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			return
 		}
 		claims := state.Claims.(jwt.MapClaims)
-		redirectURI = claims["uri"].(string)
+		fmt.Println("================claims==============")
+		fmt.Println(claims)
+		//redirectURI = claims["uri"].(string)
 
 		// delete the cookie
 		m.ClientState.DeleteState(w, r, relayState)
 	}
 
 	now := saml.TimeNow()
-	claims := AuthorizationToken{}
-	claims.Audience = m.ServiceProvider.Metadata().EntityID
-	claims.IssuedAt = now.Unix()
-	claims.ExpiresAt = now.Add(m.TokenMaxAge).Unix()
-	claims.NotBefore = now.Unix()
+	// claims := AuthorizationToken{}
+	// claims.Audience = m.ServiceProvider.Metadata().EntityID
+	// claims.IssuedAt = now.Unix()
+	// claims.ExpiresAt = now.Add(m.TokenMaxAge).Unix()
+	// claims.NotBefore = now.Unix()
+
+	//uid := assertion.Subject.NameID.Value
+	uid := strings.ToUpper(assertion.Subject.NameID.Value)
+	fmt.Println("================uid==============")
+	fmt.Println(uid)
+
+	//email := convert_to_email(uid)
+	//roles := assertion.Subject.Roles.Value
+	roles := []string{"user", "super"}
+	standardClaims := jwt.StandardClaims{
+		Audience: m.ServiceProvider.Metadata().EntityID,
+		IssuedAt: now.Unix(),
+
+		ExpiresAt: now.Add(m.TokenMaxAge).Unix(),
+		//ExpiresAt: now.Add(time.Minute * 60).Unix(),
+
+		NotBefore: now.Unix(),
+		Id:        uid,
+	}
+	claims := AuthorizationToken{uid, roles, standardClaims, map[string][]string{}}
+	m.DB.FirstOrCreate(&User{}, User{UserId: uid})
+
 	if sub := assertion.Subject; sub != nil {
 		if nameID := sub.NameID; nameID != nil {
 			claims.StandardClaims.Subject = nameID.Value
 		}
 	}
 	for _, attributeStatement := range assertion.AttributeStatements {
-		claims.Attributes = map[string][]string{}
+		//claims.Attributes = map[string][]string{}
 		for _, attr := range attributeStatement.Attributes {
 			claimName := attr.FriendlyName
 			if claimName == "" {
@@ -251,14 +359,15 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			}
 		}
 	}
-	signedToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256,
-		claims).SignedString(secretBlock)
+	signedToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secretBlock)
 	if err != nil {
 		panic(err)
 	}
 
 	m.ClientToken.SetToken(w, r, signedToken, m.TokenMaxAge)
-	http.Redirect(w, r, redirectURI, http.StatusFound)
+	ruri := "/?" + AKEY + "=" + signedToken
+
+	http.Redirect(w, r, ruri, http.StatusFound)
 }
 
 // IsAuthorized returns true if the request has already been authorized.
@@ -281,9 +390,16 @@ func (m *Middleware) GetAuthorizationToken(r *http.Request) *AuthorizationToken 
 
 	tokenClaims := AuthorizationToken{}
 	token, err := jwt.ParseWithClaims(tokenStr, &tokenClaims, func(t *jwt.Token) (interface{}, error) {
-		secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
+		//secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 		return secretBlock, nil
 	})
+
+	if claims, ok := token.Claims.(*AuthorizationToken); ok && token.Valid {
+		fmt.Printf("%v %v", claims.UserId, claims.StandardClaims.ExpiresAt)
+	} else {
+		fmt.Println(err)
+	}
+
 	if err != nil || !token.Valid {
 		m.ServiceProvider.Logger.Printf("ERROR: invalid token: %s", err)
 		return nil
@@ -292,10 +408,10 @@ func (m *Middleware) GetAuthorizationToken(r *http.Request) *AuthorizationToken 
 		m.ServiceProvider.Logger.Printf("ERROR: invalid token claims: %s", err)
 		return nil
 	}
-	if tokenClaims.Audience != m.ServiceProvider.Metadata().EntityID {
-		m.ServiceProvider.Logger.Printf("ERROR: tokenClaims.Audience does not match EntityID")
-		return nil
-	}
+	// if tokenClaims.Audience != m.ServiceProvider.Metadata().EntityID {
+	// 	m.ServiceProvider.Logger.Printf("ERROR: tokenClaims.Audience does not match EntityID")
+	// 	return nil
+	// }
 
 	return &tokenClaims
 }
@@ -326,3 +442,16 @@ func RequireAttribute(name, value string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(fn)
 	}
 }
+
+// func convert_to_email( e string) string {
+// 	is_valid_email := false
+// 	if a := strings.Split(e, "@"); len(a) == 2 {
+// 		if a0 := strings.Split( a[1] ,  "."); len(a0) == 2 {
+// 			is_valid_email = true
+// 		}
+// 	}
+// 	if !is_valid_email {
+// 		e = e +"@" + os.Getenv("EMAIL_DOMAIN")
+// 	}
+// 	return e
+// }

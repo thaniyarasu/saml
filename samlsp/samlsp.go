@@ -7,26 +7,23 @@ import (
 	"crypto/x509"
 	"encoding/xml"
 	"fmt"
+	"github.com/crewjam/saml/logger"
+	"github.com/thaniyarasu/saml"
 	"io/ioutil"
 	"net/http"
-	"net/url"
+	"os"
 	"time"
-
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/logger"
 )
 
-const defaultTokenMaxAge = time.Hour
+const defaultTokenMaxAge = time.Hour * 1
 
 // Options represents the parameters for creating a new middleware
 type Options struct {
-	URL               url.URL
 	Key               *rsa.PrivateKey
 	Logger            logger.Interface
 	Certificate       *x509.Certificate
 	AllowIDPInitiated bool
 	IDPMetadata       *saml.EntityDescriptor
-	IDPMetadataURL    *url.URL
 	HTTPClient        *http.Client
 	CookieMaxAge      time.Duration
 	CookieName        string
@@ -37,14 +34,15 @@ type Options struct {
 
 // New creates a new Middleware
 func New(opts Options) (*Middleware, error) {
-	metadataURL := opts.URL
-	metadataURL.Path = metadataURL.Path + "/saml/metadata"
-	acsURL := opts.URL
-	acsURL.Path = acsURL.Path + "/saml/acs"
+
 	logr := opts.Logger
 	if logr == nil {
 		logr = logger.DefaultLogger
 	}
+
+	fmt.Println("====================opts.CookieMaxAge===================")
+	fmt.Println(opts.CookieMaxAge)
+	fmt.Println(defaultTokenMaxAge)
 
 	tokenMaxAge := opts.CookieMaxAge
 	if opts.CookieMaxAge == 0 {
@@ -56,8 +54,7 @@ func New(opts Options) (*Middleware, error) {
 			Key:         opts.Key,
 			Logger:      logr,
 			Certificate: opts.Certificate,
-			MetadataURL: metadataURL,
-			AcsURL:      acsURL,
+
 			IDPMetadata: opts.IDPMetadata,
 			ForceAuthn:  &opts.ForceAuthn,
 		},
@@ -67,84 +64,39 @@ func New(opts Options) (*Middleware, error) {
 
 	cookieStore := ClientCookies{
 		ServiceProvider: &m.ServiceProvider,
-		Name: func() string {
-			if opts.CookieName != "" {
-				return opts.CookieName
-			}
-			return defaultCookieName
-		}(),
-		Domain: func() string {
-			if opts.CookieDomain != "" {
-				return opts.CookieDomain
-			}
-			return opts.URL.Host
-		}(),
+		Name:            defaultCookieName,
+		//Domain:          opts.URL.Host,
 		Secure: opts.CookieSecure,
 	}
 	m.ClientState = &cookieStore
 	m.ClientToken = &cookieStore
 
-	// fetch the IDP metadata if needed.
-	if opts.IDPMetadataURL == nil {
-		return m, nil
-	}
+	pwd, _ := os.Getwd()
+	data, _ := ioutil.ReadFile(pwd + "/" + os.Getenv("IDPXML"))
+	fmt.Print(string(data))
 
-	c := opts.HTTPClient
-	if c == nil {
-		c = http.DefaultClient
-	}
-	req, err := http.NewRequest("GET", opts.IDPMetadataURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	// Some providers (like OneLogin) do not work properly unless the User-Agent header is specified.
-	// Setting the user agent prevents the 403 Forbidden errors.
-	req.Header.Set("User-Agent", "Golang; github.com/crewjam/saml")
+	entity := &saml.EntityDescriptor{}
+	err := xml.Unmarshal(data, entity)
 
-	for i := 0; true; i++ {
-		resp, err := c.Do(req)
-		if err == nil && resp.StatusCode != http.StatusOK {
-			err = fmt.Errorf("%d %s", resp.StatusCode, resp.Status)
-		}
-		var data []byte
-		if err == nil {
-			data, err = ioutil.ReadAll(resp.Body)
-			resp.Body.Close()
-		}
-		if err != nil {
-			if i > 10 {
-				return nil, err
-			}
-			logr.Printf("ERROR: %s: %s (will retry)", opts.IDPMetadataURL, err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		entity := &saml.EntityDescriptor{}
-		err = xml.Unmarshal(data, entity)
-
-		// this comparison is ugly, but it is how the error is generated in encoding/xml
-		if err != nil && err.Error() == "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
-			entities := &saml.EntitiesDescriptor{}
-			if err := xml.Unmarshal(data, entities); err != nil {
-				return nil, err
-			}
-
-			err = fmt.Errorf("no entity found with IDPSSODescriptor")
-			for i, e := range entities.EntityDescriptors {
-				if len(e.IDPSSODescriptors) > 0 {
-					entity = &entities.EntityDescriptors[i]
-					err = nil
-				}
-			}
-		}
-		if err != nil {
+	// this comparison is ugly, but it is how the error is generated in encoding/xml
+	if err != nil && err.Error() == "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
+		entities := &saml.EntitiesDescriptor{}
+		if err := xml.Unmarshal(data, entities); err != nil {
 			return nil, err
 		}
 
-		m.ServiceProvider.IDPMetadata = entity
-		return m, nil
+		err = fmt.Errorf("no entity found with IDPSSODescriptor")
+		for i, e := range entities.EntityDescriptors {
+			if len(e.IDPSSODescriptors) > 0 {
+				entity = &entities.EntityDescriptors[i]
+				err = nil
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	panic("unreachable")
+	m.ServiceProvider.IDPMetadata = entity
+	return m, nil
 }

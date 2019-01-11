@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"path"
 )
 
 type UserType struct {
@@ -139,8 +140,8 @@ func (m *Middleware) setup(r *http.Request) error {
 
 	acsURL := *rootURL
 	metadataURL := *rootURL
-	acsURL.Path = acsURL.Path + os.Getenv("ACS_PATH")
-	metadataURL.Path = metadataURL.Path + os.Getenv("META_PATH")
+    acsURL.Path = path.Join(acsURL.Path, os.Getenv("ACS_PATH"))
+	metadataURL.Path = path.Join(metadataURL.Path, os.Getenv("META_PATH"))
 
 	m.ServiceProvider.MetadataURL = metadataURL
 	m.ServiceProvider.AcsURL = acsURL

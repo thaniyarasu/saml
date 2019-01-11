@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const defaultTokenMaxAge = time.Hour * 1
+const defaultTokenMaxAge = time.Hour / 2
 
 // Options represents the parameters for creating a new middleware
 type Options struct {

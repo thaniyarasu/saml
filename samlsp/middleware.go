@@ -110,7 +110,8 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				m.ServiceProvider.Logger.Printf("RESPONSE: ===\n%s\n===\nNOW: %s\nERROR: %s",
 					parseErr.Response, parseErr.Now, parseErr.PrivateErr)
 			}
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			//http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
 
@@ -127,7 +128,9 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // to start the SAML auth flow.
 func (m *Middleware) setup(r *http.Request) error {
 	var rootURL *url.URL
-	rootURL, _ = url.Parse(r.Referer())
+	referer, _ := url.Parse(r.Referer())
+	refererRoot := strings.TrimSuffix(referer.String(), referer.RequestURI())
+	rootURL, _ = url.Parse(refererRoot)
 
 	// if strings.Contains(r.Referer(), "localhost") {
 	// } else {

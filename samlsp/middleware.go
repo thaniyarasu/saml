@@ -107,6 +107,11 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
 		assertion, err := m.ServiceProvider.ParseResponse(r, m.getPossibleRequestIDs(r))
 		if err != nil {
+		fmt.Println("========================thani=====================")
+		fmt.Println(err)
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+
 			if parseErr, ok := err.(*saml.InvalidResponseError); ok {
 				m.ServiceProvider.Logger.Printf("RESPONSE: ===\n%s\n===\nNOW: %s\nERROR: %s",
 					parseErr.Response, parseErr.Now, parseErr.PrivateErr)
